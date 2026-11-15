@@ -1,0 +1,18 @@
+[
+  {
+    "id": "example-website",
+    "name": "Example website — replace before enabling",
+    "url": "https://example.com/",
+    "expected_status_codes": [200],
+    "timeout": 10,
+    "enabled": false
+  },
+  {
+    "id": "example-api",
+    "name": "Example API — replace before enabling",
+    "url": "https://example.org/health",
+    "expected_status_codes": [200, 204],
+    "timeout": 10,
+    "enabled": false
+  }
+]
