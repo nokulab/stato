@@ -19,6 +19,7 @@ Edit only `servers.json`. Copy either object inside the surrounding `[` and `]`,
 {
   "id": "my-new-service",
   "name": "My new service",
+  "details": "Public website and customer portal",
   "url": "https://example.com/replace-with-your-health-endpoint",
   "expected_status_codes": [200],
   "timeout": 10,
@@ -32,6 +33,7 @@ The URL above is a placeholder, not your server. Save/commit the file on the def
 | --- | --- |
 | `id` | Required unique lower-case ID: letters, numbers, `_`, `-`; starts with a letter or number; maximum 64 characters. |
 | `name` | Required public display name, 1–100 characters. Do not put confidential information here. |
+| `details` | Optional public description, up to 240 characters; defaults to an empty string. Rendered as text, never HTML. |
 | `url` | Required public HTTP/HTTPS URL; no embedded username/password or fragment. Use a non-secret URL. |
 | `expected_status_codes` | Optional non-empty array of integer HTTP codes; defaults to `[200]`. |
 | `timeout` | Optional wall-clock seconds per attempt, greater than zero and at most 30; defaults to `10`. |
@@ -49,20 +51,22 @@ Open **Actions → Check servers and deploy status → Run workflow**, choose th
 
 ## 5. Understand the results
 
-- **Up:** the endpoint returned an expected status at the last check, from the runner's location.
-- **Down:** both attempts failed or returned an unexpected status. This describes the endpoint check, not definitive proof that the whole server is offline. DNS, TLS, firewalls and runner connectivity can cause failures.
-- **Unknown:** no trustworthy result, invalid configuration, a monitor problem, or a private endpoint unsupported by this runner.
-- **Stale:** the last check is **more than 15 minutes old**, regardless of its previous result. Current availability is unknown. A stale success never appears as Up.
+- **Green — Up:** the endpoint returned an expected HTTP status at the last check.
+- **Red — Unreachable:** connection/DNS failure or timeout persisted after one retry, from the monitoring runner. This is not proof that the physical server is powered off.
+- **Yellow — Warning:** an unexpected HTTP response, certificate error, invalid configuration, missing/unknown result or unsupported private endpoint. Results older than **15 minutes** also turn yellow, even if their last state was green or red; current availability is unknown.
 
-Times use Australian formatting and **Australia/Sydney**, including daylight-saving changes. Missing/malformed results show Unknown; a failed refresh retains previously loaded results with a visible warning and still ages them into Stale. Empty results never produce “all up”. Invalid enabled entries become Unknown while valid entries continue. Unreadable JSON publishes a configuration error with no invented server list.
+The monitor publishes structured `reason_code` values (`http_status`, `network`, `timeout`, `tls`, `config`, `private`, `internal`). The dashboard never guesses a classification from free-text errors. Older results without codes remain readable; old `down` results are conservatively yellow until a new check supplies a code.
 
-This initial version supports **public, unauthenticated HTTP/HTTPS endpoints**. Recognised private hostnames and addresses resolving to non-public IPs return Unknown without a request. Private-network servers require a monitoring runner with network access (for example, a suitably configured self-hosted runner), plus an explicit adaptation of the public-address guard. Their failure to respond from a public runner does not prove they are offline.
+The grid follows configuration order: 1 server fills the area, 4 use 2×2, 6 use 3×2, and 16 use 4×4 on desktop. Intermediate counts use 1–4 columns with no dummy tiles. More than 16 servers add rows. Tiles have a 15rem minimum height, text wraps, and long lists scroll. Tablets use at most two columns and small phones one. The compact toolbar shows counts, results-update time, refresh and a fullscreen toggle where the browser supports it. Press Escape or Exit fullscreen to leave fullscreen.
+Times use Australian formatting and **Australia/Sydney**, including daylight-saving changes. Missing/malformed results show Warning; a failed refresh retains previously loaded results with a visible warning and still ages them into Stale. Empty results never produce “all up”. Invalid enabled entries become Warning while valid entries continue. Unreadable JSON publishes a configuration error with no invented server list.
+
+This initial version supports **public, unauthenticated HTTP/HTTPS endpoints**. Recognised private hostnames and addresses resolving to non-public IPs return Warning without a request. Private-network servers require a monitoring runner with network access (for example, a suitably configured self-hosted runner), plus an explicit adaptation of the public-address guard. Their failure to respond from a public runner does not prove they are offline.
 
 ## Security and publication
 
 `servers.json` stays out of the Pages artifact, but **is visible in a public source repository**. Never store credentials, secret query parameters, private endpoints or sensitive names in it. This version needs no credentials and does not implement authenticated checks. If authentication is added later, keep its values in **Settings → Secrets and variables → Actions**, inject them only into the monitoring step, and never put them in source, output, browser code or logs.
 
-The public `status.json` contains only schema version, publication time, configuration-error flag and each enabled entry's ID, public name, state, response milliseconds, check time and a fixed/sanitised reason. URLs, headers, raw exceptions and responses are excluded. Only the four static site files, `.nojekyll` and generated results are uploaded. No commits are made by the workflow, so deployments cannot create push loops. Workflow concurrency serialises checks/deployments; a newer queued run can replace a pending run.
+The public `status.json` contains only schema version, publication time, configuration-error flag and each enabled entry's ID, public name, state, optional public details, structured reason code, response milliseconds, check time and a fixed/sanitised reason. URLs, headers, raw exceptions and responses are excluded. Only the four static site files, `.nojekyll` and generated results are uploaded. No commits are made by the workflow, so deployments cannot create push loops. Workflow concurrency serialises checks/deployments; a newer queued run can replace a pending run.
 
 ## Scheduling and limits
 
@@ -76,9 +80,9 @@ This custom Actions deployment is exempt from Pages' soft ten-builds-per-hour li
 
 | Symptom | What to check |
 | --- | --- |
-| Down | Confirm the final public URL, expected codes, TLS certificate, firewall access from GitHub runners, DNS and timeout. A 401/403 often means the endpoint is not public. Redirects need their final URL. |
-| Unknown/configuration error | Validate JSON and the fields above; check duplicate IDs. Diagnostics intentionally avoid echoing input. Fix the file and rerun. |
-| Stale | Inspect the newest Actions run, queued deployments, schedule enablement, inactivity, billing/usage limits and environment approval rules. Run manually. |
+| Unreachable / Warning | Confirm the final public URL, expected codes, TLS certificate, firewall access from GitHub runners, DNS and timeout. A 401/403 often means the endpoint is not public. Redirects need their final URL. |
+| Warning/configuration error | Validate JSON and the fields above; check duplicate IDs. Diagnostics intentionally avoid echoing input. Fix the file and rerun. |
+| Yellow / stale | Inspect the newest Actions run, queued deployments, schedule enablement, inactivity, billing/usage limits and environment approval rules. Run manually. |
 | Build failed | Open the failed step in Actions. Check tests, Python/Node runner availability and file paths. No new artifact is deployed on a build failure; previous results age to Stale. |
 | Deployment failed/403/404 | Verify Pages source is GitHub Actions, repository plan supports Pages, `github-pages` permits the default branch, and the deploy job retains `pages: write` and `id-token: write`. See [custom Pages workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages). |
 | No servers | Replace and enable an example in `servers.json`. After committing, wait for deployment, then refresh results. |
@@ -99,4 +103,4 @@ Open `http://localhost:8765/`. Tests cover real local HTTP responses, expected/u
 
 ## Design reference
 
-Styling is provisional. Accessible repositories `nokulab/mariko`, `nokulab/sahar` and `nokulab/yuito` were located, but no matching user design approval was verified in accessible chats. No design from those repositories has been represented as approved or reused. The approved repository/chat reference is still needed for a faithful visual match.
+The tile grid follows the user-supplied Slide1–Slide4 references: full-area flat tiles, centred content, square corners and thin white dividers. Green and red are darker than the mock-ups to maintain readable white-text contrast; yellow uses dark text. No illustrative/demo results are deployed.
