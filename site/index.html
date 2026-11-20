@@ -3,32 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Current endpoint availability, checked periodically from a monitoring runner.">
+  <meta name="description" content="Stato: endpoint availability from the monitoring runner.">
   <meta name="color-scheme" content="light">
-  <title>Server status</title>
+  <title>Stato · Server status</title>
   <link rel="stylesheet" href="./style.css">
   <script type="module" src="./app.js"></script>
 </head>
 <body>
-  <a class="skip" href="#main">Skip to server status</a>
-  <header><a class="brand" href="./"><span aria-hidden="true">▤</span> Server status</a><span class="header-note">Availability overview</span></header>
-  <main id="main">
-    <div class="intro"><p class="eyebrow">SYSTEM OVERVIEW</p><h1>A clear view of your services.</h1><p>Periodic endpoint checks. One place to see the latest results.</p></div>
-    <section class="summary unknown" id="summary" aria-labelledby="summary-title">
-      <span class="summary-icon" id="summary-icon" aria-hidden="true">?</span>
-      <div><p class="eyebrow" id="summary-label">UNKNOWN</p><h2 id="summary-title">Loading published results</h2><p id="summary-detail">Waiting for the latest available check.</p></div>
-    </section>
-    <div class="toolbar"><div><h2>Monitored servers <span id="server-count"></span></h2><p id="published">Results have not loaded yet.</p></div><button id="refresh" type="button">Refresh results</button></div>
-    <p class="notice" id="notice" role="status" aria-live="polite">Loading results…</p>
-    <div id="servers" class="servers"></div>
-    <noscript><p class="empty">JavaScript is required to display and refresh the published results.</p></noscript>
-    <section class="guide" aria-labelledby="guide-title"><h2 id="guide-title">Reading this dashboard</h2><div class="legend">
-      <p><strong class="up-text">✓ Up</strong>Expected HTTP response at the last check.</p>
-      <p><strong class="down-text">× Down</strong>The endpoint check failed from the runner.</p>
-      <p><strong>? Unknown</strong>No reliable result is available.</p>
-      <p><strong class="stale-text">◷ Stale</strong>Result is over 15 minutes old; current status is unknown.</p>
-    </div></section>
-    <footer><p>Results refresh every 60 seconds. “Refresh results” reloads published data; it does not run a server check.</p><p>Checks measure endpoint availability from the runner’s location. Scheduled checks may be delayed. All times: Australia/Sydney.</p></footer>
-  </main>
+  <a class="skip" href="#servers">Skip to server status</a>
+  <header class="toolbar">
+    <div class="overview"><h1>Stato</h1><div><p id="summary" class="summary warning">Loading results…</p><p id="counts">Waiting for published checks</p></div></div>
+    <div class="controls"><p id="published">No results loaded</p><button id="refresh" type="button">Refresh results</button><button id="fullscreen" type="button" hidden>Enter fullscreen</button></div>
+    <p id="notice" class="notice" role="status" aria-live="polite">Loading published results…</p>
+  </header>
+  <main id="servers" class="servers" aria-label="Server status grid" tabindex="-1"></main>
+  <noscript><p class="empty">Enable JavaScript to display published server results.</p></noscript>
+  <footer>Checks reflect the runner’s location. Results refresh every 60 seconds; “Refresh results” does not run a new check. Times: Australia/Sydney.</footer>
 </body>
 </html>

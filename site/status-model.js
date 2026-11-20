@@ -3,11 +3,28 @@ const iso = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/;
 export function timestamp(value) {
   return typeof value === 'string' && iso.test(value) ? Date.parse(value) : NaN;
 }
+const reasons = {
+  timeout: 'The endpoint timed out from the monitoring runner after retrying.',
+  network: 'The endpoint could not be reached from the monitoring runner after retrying.',
+  http_status: 'The endpoint responded with an unexpected HTTP status.',
+  tls: 'TLS certificate verification failed.',
+  private: 'Private endpoint: a runner with network access is required.',
+  config: 'Invalid server configuration. Check servers.json.',
+  internal: 'The monitor could not complete this check.'
+};
+export function assessment(server, now = Date.now()) {
+  const checked = timestamp(server?.checked_at);
+  if (!Number.isFinite(checked)) return {state: 'warning', reason: server?.reason_code === 'config' ? reasons.config : 'No reliable check result is available.'};
+  if (checked > now + 60000) return {state: 'warning', reason: 'Check time is in the future. Current availability is unknown.'};
+  if (now - checked > STALE_MS) return {state: 'warning', reason: 'Stale result: over 15 minutes old. Current availability is unknown.'};
+  if (server.status === 'up' && !server.reason_code) return {state: 'up', reason: ''};
+  if (server.status === 'down' && ['network', 'timeout'].includes(server.reason_code)) {
+    return {state: 'unreachable', reason: reasons[server.reason_code]};
+  }
+  return {state: 'warning', reason: reasons[server.reason_code] || 'No reliable health result is available.'};
+}
 export function stateOf(server, now = Date.now()) {
-  const checked = timestamp(server.checked_at);
-  if (!Number.isFinite(checked) || checked > now + 60000) return 'unknown';
-  if (now - checked > STALE_MS) return 'stale';
-  return ['up', 'down', 'unknown'].includes(server.status) ? server.status : 'unknown';
+  return assessment(server, now).state;
 }
 export function parseResults(data) {
   if (!data || data.schema_version !== 1 || !Array.isArray(data.servers)
@@ -17,7 +34,8 @@ export function parseResults(data) {
   const ids = new Set();
   for (const server of data.servers) {
     if (!server || typeof server.id !== 'string' || ids.has(server.id)
-        || typeof server.name !== 'string' || !server.name.trim() || server.name.length > 100) {
+        || typeof server.name !== 'string' || !server.name.trim() || server.name.length > 100
+        || (server.details !== undefined && (typeof server.details !== 'string' || server.details.length > 240))) {
       throw new Error('Invalid server');
     }
     ids.add(server.id);
@@ -25,15 +43,21 @@ export function parseResults(data) {
   return data;
 }
 export function overall(data, now = Date.now()) {
-  if (!data) return {state: 'unknown', title: 'Status unavailable'};
-  const states = data.servers.map(s => stateOf(s, now));
-  if (states.includes('down')) return {state: 'down', title: 'Some endpoints are unavailable'};
-  if (states.includes('stale') || now - timestamp(data.generated_at) > STALE_MS) {
-    return {state: 'stale', title: 'Results are out of date'};
+  const counts = {up: 0, unreachable: 0, warning: 0};
+  for (const server of data?.servers || []) counts[stateOf(server, now)]++;
+  let state = 'warning', title = 'Status unavailable';
+  if (data) {
+    const published = timestamp(data.generated_at);
+    if (now - published > STALE_MS) title = 'Results are stale';
+    else if (!Number.isFinite(published) || published > now + 60000) title = 'Results time is invalid';
+    else if (counts.unreachable) { state = 'unreachable'; title = 'Some endpoints are unreachable'; }
+    else if (data.configuration_error || counts.warning) title = 'Some checks need attention';
+    else if (!data.servers.length) title = 'No servers enabled';
+    else { state = 'up'; title = 'All endpoints are up'; }
   }
-  if (data.configuration_error || states.includes('unknown') || timestamp(data.generated_at) > now + 60000) {
-    return {state: 'unknown', title: 'Some statuses are unknown'};
-  }
-  if (!states.length) return {state: 'unknown', title: 'No servers enabled'};
-  return {state: 'up', title: 'All endpoints responded successfully'};
+  return {state, title, counts};
+}
+// Match the supplied desktop references; cap columns so large lists scroll legibly.
+export function gridColumns(count) {
+  return count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
 }
