@@ -45,6 +45,9 @@ def validate(entry):
             and isinstance(entry.get("name"), str)
             and 1 <= len(entry["name"].strip()) <= 100
             and not any(ord(c) < 32 for c in entry["name"])
+            and isinstance(entry.get("details", ""), str)
+            and len(entry.get("details", "")) <= 240
+            and not any(ord(c) < 32 for c in entry.get("details", ""))
             and url.scheme in ("http", "https") and url.hostname
             and not url.username and not url.password and not url.fragment
             and (url.port is None or 1 <= url.port <= 65535)
@@ -71,10 +74,10 @@ def probe(entry):
         url = urllib.parse.urlsplit(entry["url"])
         host = url.hostname.rstrip('.').lower()
         if host == 'localhost' or host.endswith(('.localhost', '.local', '.internal', '.lan')) or ('.' not in host and ':' not in host):
-            return {"status": "unknown", "reason": REASONS["private"], "response_ms": None}
+            return {"status": "unknown", "reason_code": "private", "reason": REASONS["private"], "response_ms": None}
         addresses = socket.getaddrinfo(url.hostname, url.port or (443 if url.scheme == "https" else 80))
         if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
-            return {"status": "unknown", "reason": REASONS["private"], "response_ms": None}
+            return {"status": "unknown", "reason_code": "private", "reason": REASONS["private"], "response_ms": None}
         # No redirects or proxies: check exactly the configured endpoint, without reading its body.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         request = urllib.request.Request(entry["url"], headers={"User-Agent": "SimpleStatus/1.0", "Accept": "*/*"})
@@ -87,6 +90,7 @@ def probe(entry):
         elapsed = round((time.monotonic() - start) * 1000)
         ok = code in entry.get("expected_status_codes", [200])
         return {"status": "up" if ok else "down", "response_ms": elapsed,
+                "reason_code": None if ok else "http_status",
                 "reason": None if ok else f"Unexpected HTTP status {code}."}
     except (TimeoutError, socket.timeout):
         reason = "timeout"
@@ -97,8 +101,8 @@ def probe(entry):
     except OSError:
         reason = "network"
     except Exception:
-        return {"status": "unknown", "reason": REASONS["internal"], "response_ms": None}
-    return {"status": "down", "reason": REASONS[reason], "response_ms": None}
+        return {"status": "unknown", "reason_code": "internal", "reason": REASONS["internal"], "response_ms": None}
+    return {"status": "down", "reason_code": reason, "reason": REASONS[reason], "response_ms": None}
 
 
 def attempt(entry):
@@ -108,9 +112,9 @@ def attempt(entry):
                                 timeout=entry.get("timeout", 10), check=True)
         return json.loads(result.stdout)
     except subprocess.TimeoutExpired:
-        return {"status": "down", "reason": REASONS["timeout"], "response_ms": None}
+        return {"status": "down", "reason_code": "timeout", "reason": REASONS["timeout"], "response_ms": None}
     except Exception:
-        return {"status": "unknown", "reason": REASONS["internal"], "response_ms": None}
+        return {"status": "unknown", "reason_code": "internal", "reason": REASONS["internal"], "response_ms": None}
 
 
 def check(entry):
@@ -118,7 +122,7 @@ def check(entry):
     if result["status"] == "down":
         time.sleep(1)
         result = attempt(entry)  # One retry only; publish final attempt's measurement.
-    return {"id": entry["id"], "name": entry["name"], **result, "checked_at": now()}
+    return {"id": entry["id"], "name": entry["name"], "details": entry.get("details", ""), **result, "checked_at": now()}
 
 
 def collect(config):
@@ -140,7 +144,7 @@ def collect(config):
             generated["configuration_error"] = True
             generated["servers"].append({"id": f"invalid-entry-{index + 1}",
                 "name": f"Configuration entry {index + 1}", "status": "unknown",
-                "response_ms": None, "checked_at": None, "reason": REASONS["config"]})
+                "response_ms": None, "checked_at": None, "reason_code": "config", "reason": REASONS["config"]})
         else:
             positions.append(len(generated["servers"]))
             generated["servers"].append(None)
@@ -178,6 +182,6 @@ if __name__ == "__main__":
         try:
             print(json.dumps(probe(json.load(sys.stdin))))
         except Exception:
-            print(json.dumps({"status": "unknown", "reason": REASONS["internal"], "response_ms": None}))
+            print(json.dumps({"status": "unknown", "reason_code": "internal", "reason": REASONS["internal"], "response_ms": None}))
     else:
         build(args.config, args.output)
