@@ -52,16 +52,35 @@ The URL is an example, not your server. Existing entries without `details` remai
 | `id` | Unique lower-case ID, letters/numbers/`_`/`-`, starting with a letter or number; up to 64 characters. |
 | `name` | Display name, 1–100 characters. Use a non-sensitive service label. |
 | `details` | Optional description, up to 240 characters. Rendered as text, never HTML. |
-| `url` | HTTP/HTTPS health endpoint; no username/password or fragment. |
-| `expected_status_codes` | Optional non-empty list of HTTP codes; defaults to `[200]`. |
+| `url` | HTTP/HTTPS health endpoint, or `tcp://hostname:port`; no username/password or fragment. TCP requires an explicit port and no path or query. |
+| `expected_status_codes` | HTTP only: optional non-empty list of HTTP codes; defaults to `[200]`. Omit for TCP checks. |
 | `timeout` | Optional wall-clock seconds per attempt, greater than zero and at most 30; defaults to `10`. |
 | `enabled` | Optional boolean; defaults to `true`. |
 
 Up to 100 entries are supported, with eight concurrent checks. Failed requests get one retry after one second. The last attempt supplies the HTTP result and response time, measured to response headers. Bodies are not read; redirects are not followed. Configure the final health URL, or explicitly accept a redirect code if intended. Endpoint authentication is not implemented: do not embed credentials or secret query parameters in URLs. A future authentication extension should use local secret storage/environment injection, not source files or browser code.
 
+## Monitor server connectivity (TCP)
+
+Use a TCP check to verify that a server accepts connections on a chosen port, such as SSH port 22. No SSH credentials or keys are needed. Copy this disabled example into your private configuration, replace the placeholder and enable it:
+
+```json
+{
+  "id": "example-server",
+  "name": "Example server",
+  "details": "Server connectivity",
+  "url": "tcp://replace-with-your-server:22",
+  "timeout": 10,
+  "enabled": false
+}
+```
+
+Omit `expected_status_codes` for TCP. Private addresses still require `--allow-private`. The monitor connects and immediately closes the socket without logging in, reading a banner or sending application data. TCP response time measures DNS/connection setup. Retries, timeouts and stale handling are the same as HTTP checks. TCP tiles show the check type instead of HTTP result fields; addresses and ports stay out of generated data.
+
+An open TCP port establishes reachability of that listener, not SSH authentication, website health, CPU, RAM or disk health. A firewall can cause an unreachable result. If OMV runs the monitor and OMV goes down, checks stop too; an already-open dashboard ages into a stale warning, while the hosted page may become unavailable. Independent detection of that outage needs a monitor on another machine.
+
 ## Read the tiles
 
-- **Green — Up:** the last check returned an expected HTTP status.
+- **Green — Up:** the last check returned an expected HTTP status or accepted a TCP connection.
 - **Red — Unreachable:** connection/DNS failure or timeout persisted after the retry, from the monitoring machine.
 - **Yellow — Warning:** unexpected HTTP status, certificate error, invalid configuration, unknown/missing result, unsupported private endpoint, or a check older than **15 minutes**. Stale green and red results both become yellow; current availability is unknown.
 
