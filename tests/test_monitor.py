@@ -3,6 +3,8 @@ import io
 import json
 from pathlib import Path
 import socket
+import ssl
+import urllib.error
 import subprocess
 import tempfile
 import threading
@@ -80,6 +82,24 @@ class MonitorTests(unittest.TestCase):
         with patch.object(monitor, 'attempt', return_value=down) as attempt, patch.object(monitor.time, 'sleep'):
             self.assertEqual(monitor.check(self.entry())['status'], 'down')
             self.assertEqual(attempt.call_count, 2)
+
+    def test_reason_codes_distinguish_response_network_and_tls(self):
+        self.assertEqual(self.local_probe(self.entry('/failure'))['reason_code'], 'http_status')
+        self.assertEqual(self.local_probe({**self.entry('/slow'), 'timeout': .02})['reason_code'], 'timeout')
+        for failure, code in [(socket.gaierror(), 'network'), (ConnectionRefusedError(), 'network'),
+                              (ssl.SSLCertVerificationError(), 'tls'),
+                              (urllib.error.URLError(ssl.SSLCertVerificationError()), 'tls')]:
+            with patch.object(monitor.socket, 'getaddrinfo', side_effect=failure):
+                self.assertEqual(monitor.probe(self.entry())['reason_code'], code)
+
+    def test_optional_details_validation_and_publication(self):
+        details = '<img src=x onerror=alert(1)> Public service & status'
+        for entry in [self.entry(), {**self.entry(), 'details': details}]:
+            self.assertTrue(monitor.validate(entry))
+            result = self.collect_text(json.dumps([entry]))['servers'][0]
+            self.assertEqual(result['details'], entry.get('details', ''))
+        for details in [None, 5, 'x' * 241, 'bad\nvalue']:
+            self.assertFalse(monitor.validate({**self.entry(), 'details': details}))
 
     def test_invalid_config(self):
         for update in [{'url': 'file:///secret'}, {'url': 'https://user:password@example.com/'}, {'timeout': True},
