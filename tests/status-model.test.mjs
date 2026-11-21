@@ -64,3 +64,11 @@ test('HTTP metadata is numeric, optional and independent of health state', () =>
   assert.equal(stateOf({...row('down','http_status'),http_status:503},now), 'warning');
   assert.equal(stateOf({...row('up',null,STALE_MS+1),http_status:200},now), 'warning');
 });
+
+test('TCP tiles omit HTTP fields and retain unreachable and stale rules', () => {
+  const tcp = {...row(), check_type:'tcp'};
+  assert.deepEqual(httpDetails(tcp), ['Check: TCP connection']);
+  assert.equal(stateOf(tcp,now), 'up');
+  assert.equal(stateOf({...tcp,status:'down',reason_code:'network'},now), 'unreachable');
+  assert.equal(stateOf(tcp,now+STALE_MS+1), 'warning');
+});

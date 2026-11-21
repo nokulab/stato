@@ -115,6 +115,42 @@ class MonitorTests(unittest.TestCase):
         for details in [None, 5, 'x' * 241, 'bad\nvalue']:
             self.assertFalse(monitor.validate({**self.entry(), 'details': details}))
 
+    def tcp_entry(self):
+        return {**self.entry(), 'url': f'tcp://127.0.0.1:{self.server.server_port}'}
+
+    def test_tcp_success_private_guard_and_output(self):
+        entry = self.tcp_entry()
+        self.assertTrue(monitor.validate(entry))
+        self.assertEqual(monitor.check(entry)['reason_code'], 'private')
+        result = monitor.check(entry, allow_private=True)
+        self.assertEqual(result['status'], 'up')
+        self.assertEqual(result['check_type'], 'tcp')
+        self.assertIsInstance(result['response_ms'], int)
+        for field in ['http_status', 'expected_status_codes', 'url', 'host', 'port']:
+            self.assertNotIn(field, result)
+        self.assertNotIn('127.0.0.1', json.dumps(result))
+
+    def test_tcp_refusal_timeout_and_retry(self):
+        entry = self.tcp_entry()
+        def local_attempt(entry, allow_private=False):
+            return monitor.probe(entry, allow_private=allow_private)
+        with patch.object(monitor.socket, 'create_connection', side_effect=ConnectionRefusedError()) as connect, \
+             patch.object(monitor, 'attempt', side_effect=local_attempt), patch.object(monitor.time, 'sleep') as sleep:
+            result = monitor.check(entry, allow_private=True)
+            self.assertEqual(result['reason_code'], 'network')
+            self.assertEqual(result['status'], 'down')
+            self.assertEqual(connect.call_count, 2)
+            sleep.assert_called_once_with(1)
+        with patch.object(monitor.socket, 'create_connection', side_effect=TimeoutError()):
+            self.assertEqual(monitor.probe(self.tcp_entry(), allow_private=True)['reason_code'], 'timeout')
+
+    def test_tcp_invalid_config(self):
+        for url in ['tcp://example.com', 'tcp://example.com:0', 'tcp://example.com:65536',
+                    'tcp://user:secret@example.com:22', 'tcp://example.com:22/path',
+                    'tcp://example.com:22?secret=x', 'ssh://example.com:22']:
+            self.assertFalse(monitor.validate({**self.tcp_entry(), 'url': url}))
+        self.assertFalse(monitor.validate({**self.tcp_entry(), 'expected_status_codes': [200]}))
+
     def test_invalid_config(self):
         for update in [{'url': 'file:///secret'}, {'url': 'https://user:password@example.com/'}, {'timeout': True},
                        {'timeout': 0}, {'timeout': float('nan')}, {'timeout': 31}, {'enabled': 'yes'},
