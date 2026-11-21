@@ -61,3 +61,16 @@ export function overall(data, now = Date.now()) {
 export function gridColumns(count) {
   return count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4;
 }
+
+// Only numeric HTTP metadata is displayed; never expose request URLs or raw responses.
+export function httpDetails(server) {
+  const valid = code => Number.isInteger(code) && code >= 100 && code <= 599;
+  const lines = [];
+  if (valid(server.http_status)) lines.push(`Last HTTP status: ${server.http_status}`);
+  else if (server.http_status === null) lines.push('Last HTTP status: no response received');
+  if (Array.isArray(server.expected_status_codes) && server.expected_status_codes.length
+      && server.expected_status_codes.every(valid)) {
+    lines.push(`Expected HTTP: ${server.expected_status_codes.join(', ')}`);
+  }
+  return lines;
+}

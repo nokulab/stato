@@ -1,4 +1,4 @@
-import {parseResults, assessment, overall, timestamp, gridColumns} from './status-model.js';
+import {parseResults, assessment, overall, timestamp, gridColumns, httpDetails} from './status-model.js';
 const $ = id => document.getElementById(id);
 const labels = {up: '✓ Up', unreachable: '× Unreachable', warning: '⚠ Warning'};
 const formatter = new Intl.DateTimeFormat('en-AU', {timeZone: 'Australia/Sydney', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'});
@@ -39,6 +39,7 @@ function render() {
     tile.append(element('h2', server.name));
     if (server.details) tile.append(element('p', server.details, 'details'));
     tile.append(element('p', labels[state], 'status'));
+    for (const line of httpDetails(server)) tile.append(element('p', line, 'metric'));
     if (Number.isFinite(server.response_ms) && server.response_ms >= 0) {
       tile.append(element('p', `Last response: ${Math.round(server.response_ms)} ms`, 'metric'));
     }
