@@ -64,6 +64,7 @@ export function gridColumns(count) {
 
 // Only numeric HTTP metadata is displayed; never expose request URLs or raw responses.
 export function httpDetails(server) {
+  if (server.check_type === 'tcp') return ['Check: TCP connection'];
   const valid = code => Number.isInteger(code) && code >= 100 && code <= 599;
   const lines = [];
   if (valid(server.http_status)) lines.push(`Last HTTP status: ${server.http_status}`);
