@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {stateOf, assessment, overall, parseResults, STALE_MS, gridColumns} from '../site/status-model.js';
+import {stateOf, assessment, overall, parseResults, STALE_MS, gridColumns, httpDetails} from '../site/status-model.js';
 const now = Date.parse('2026-11-15T01:00:00Z');
 const row = (status = 'up', reason_code = null, age = 0) => ({id: 'one', name: 'Example', status, reason_code, response_ms: 42, checked_at: new Date(now-age).toISOString()});
 const data = servers => ({schema_version: 1, generated_at: new Date(now).toISOString(), configuration_error: false, servers});
@@ -52,4 +52,15 @@ test('reference grids, intermediate counts and large lists', () => {
   for (const [count, columns] of [[0,1],[1,1],[2,2],[4,2],[5,3],[6,3],[9,3],[10,4],[16,4],[17,4],[25,4],[100,4]]) {
     assert.equal(gridColumns(count), columns);
   }
+});
+
+test('HTTP metadata is numeric, optional and independent of health state', () => {
+  assert.deepEqual(httpDetails({}), []);
+  assert.deepEqual(httpDetails({http_status:503,expected_status_codes:[200,204]}),
+    ['Last HTTP status: 503','Expected HTTP: 200, 204']);
+  assert.deepEqual(httpDetails({http_status:null,expected_status_codes:[200]}),
+    ['Last HTTP status: no response received','Expected HTTP: 200']);
+  assert.deepEqual(httpDetails({http_status:'private.internal',expected_status_codes:['secret']}), []);
+  assert.equal(stateOf({...row('down','http_status'),http_status:503},now), 'warning');
+  assert.equal(stateOf({...row('up',null,STALE_MS+1),http_status:200},now), 'warning');
 });

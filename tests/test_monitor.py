@@ -54,6 +54,7 @@ class MonitorTests(unittest.TestCase):
         result = self.local_probe(self.entry())
         self.assertEqual(result['status'], 'up')
         self.assertIsInstance(result['response_ms'], int)
+        self.assertEqual(result['http_status'], 200)
         self.assertIsNone(result['reason'])
         self.assertEqual(self.local_probe({**self.entry('/failure'), 'expected_status_codes': [503]})['status'], 'up')
         self.assertEqual(self.local_probe({**self.entry('/empty'), 'expected_status_codes': [204]})['status'], 'up')
@@ -62,6 +63,7 @@ class MonitorTests(unittest.TestCase):
         result = self.local_probe(self.entry('/failure'))
         self.assertEqual(result['status'], 'down')
         self.assertEqual(result['reason'], 'Unexpected HTTP status 503.')
+        self.assertEqual(result['http_status'], 503)
         self.assertEqual(self.local_probe(self.entry('/redirect'))['reason'], 'Unexpected HTTP status 302.')
 
     def test_timeout_and_process_deadline(self):
@@ -72,6 +74,16 @@ class MonitorTests(unittest.TestCase):
     def test_private_is_unknown(self):
         self.assertEqual(monitor.probe(self.entry())['status'], 'unknown')
         self.assertEqual(monitor.check(self.entry())['reason'], monitor.REASONS['private'])
+
+    def test_private_network_requires_explicit_runner_option(self):
+        entry = self.entry()
+        self.assertEqual(monitor.check(entry)['reason_code'], 'private')
+        result = monitor.check(entry, allow_private=True)
+        self.assertEqual(result['status'], 'up')
+        self.assertEqual(result['http_status'], 200)
+        self.assertNotIn('127.0.0.1', json.dumps(result))
+        # Configuration cannot opt itself into internal network access.
+        self.assertEqual(monitor.check({**entry, 'allow_private': True})['reason_code'], 'private')
 
     def test_retry_is_bounded_and_can_recover(self):
         down = {'status': 'down', 'reason': monitor.REASONS['network'], 'response_ms': None}
@@ -98,6 +110,8 @@ class MonitorTests(unittest.TestCase):
             self.assertTrue(monitor.validate(entry))
             result = self.collect_text(json.dumps([entry]))['servers'][0]
             self.assertEqual(result['details'], entry.get('details', ''))
+            self.assertEqual(result['expected_status_codes'], [200])
+            self.assertIsNone(result['http_status'])
         for details in [None, 5, 'x' * 241, 'bad\nvalue']:
             self.assertFalse(monitor.validate({**self.entry(), 'details': details}))
 
