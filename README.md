@@ -1,6 +1,6 @@
 # Stato
 
-A simple server-status grid for **private hosting**, with reusable source code on GitHub. Plain HTML/CSS/JavaScript, Python standard library and no database or monitoring subscription. GitHub Actions runs tests only: it does not check your servers or publish results. There are no accounts, notifications or historical charts.
+A simple server-status grid for **private home servers**. Plain HTML/CSS/JavaScript, Python standard library and no database or monitoring subscription.
 
 ## Run on your server
 
