@@ -1,25 +1,43 @@
 # Stato
 
-A small current-availability dashboard for GitHub Pages. Plain HTML/CSS/JavaScript, Python standard library, and GitHub Actions. No installation or build dependencies, accounts, notifications, database or uptime history.
+A simple server-status grid for **private hosting**, with reusable source code on GitHub. Plain HTML/CSS/JavaScript, Python standard library and no database or monitoring subscription. GitHub Actions runs tests only: it does not check your servers or publish results. There are no accounts, notifications or historical charts.
 
-## 1. Enable the website
+## Run on your server
 
-1. Put these files in the root of `nokulab/stato`, including `.github/workflows/status.yml`, on its default branch.
-2. In **Settings → Pages → Build and deployment → Source**, choose **GitHub Actions**. In **Settings → Actions → General**, allow the official `actions/*` actions used by the workflow.
-3. In **Actions**, enable workflows if GitHub prompts. Open **Check servers and deploy status → Run workflow**, select the default branch and run it.
-4. Wait for both `build` and `deploy` to succeed. The deployment links to the Pages URL, normally `https://nokulab.github.io/stato/`. The environment `github-pages` must allow deployment from the default branch; a required human review will also block scheduled publication until approved.
+Requires Python 3.10+ on a machine that can reach the monitored endpoints. The example below assumes Linux, a checkout at `/opt/stato`, and an existing private web server. Adapt paths to your installation.
 
-Both examples start **disabled**. No actual server addresses are assumed. The first deployment therefore shows **No servers enabled**. All URLs used by the dashboard are relative, including `./status.json`, so repository subpaths work.
+1. Clone this repository. Copy the example `servers.json` to `/etc/stato/servers.json`, outside the checkout and web root. Restrict this file to the account running the monitor. Do not commit real internal addresses to the public repository.
+2. Edit that configuration as described below. Both included examples are disabled; no real addresses are assumed.
+3. Run a check and generate the website:
 
-## 2. Add a server
+   ```sh
+   python3 /opt/stato/scripts/monitor.py --config /etc/stato/servers.json --output /var/www/stato
+   ```
 
-Edit only `servers.json`. Copy either object inside the surrounding `[` and `]`, add a comma between objects, replace the example URL with your public health endpoint, and give it a unique ID:
+   For endpoints on your own private network, explicitly add `--allow-private`. This permits internal addresses; it does not provide network access or disable TLS certificate verification. Use it only on your trusted monitoring machine with a trusted configuration file. Without it, recognised private endpoints produce a yellow Warning, not a definitive offline claim.
+
+4. Configure your existing web server to serve **only `/var/www/stato`**, never the checkout or `/etc/stato`. Limit access using your LAN/VPN or existing authenticated HTTPS server. The dashboard has no built-in login, and a private server can still expose a website publicly if its firewall or web server allows it. Apply the same access restrictions to `status.json` as the HTML page.
+5. Schedule the command every five minutes on that machine. For Linux with `cron` and `flock`, run this as the monitor account, with a writable `/var/lib/stato` directory and output directory:
+
+   ```cron
+   */5 * * * * /usr/bin/flock -n /var/lib/stato/check.lock /usr/bin/python3 /opt/stato/scripts/monitor.py --config /etc/stato/servers.json --output /var/www/stato --allow-private
+   ```
+
+   Omit `--allow-private` if all targets should be public. The lock skips overlapping runs. Configure your scheduler's log destination privately. Run the same command manually after configuration changes; it is also picked up on the next scheduled check. No workflow or HTML changes are needed when changing servers.
+
+Monitoring depends on the host, scheduler and network being available; exact timing and uninterrupted monitoring are not guaranteed. Results older than 15 minutes turn yellow. Checks establish endpoint availability **from the monitoring machine**, not proof that a physical server is powered on or off.
+
+For a local preview, generate the default `dist/` directory with `python3 scripts/monitor.py`, then use `python3 -m http.server 8765 --bind 127.0.0.1 --directory dist`. Open `http://localhost:8765/`. This development server is not an authenticated production server.
+
+## Add, edit or disable a server
+
+Edit only your private `servers.json`. Copy one entry inside its surrounding `[` and `]`, separate entries with commas, and replace the placeholder URL. This is a complete entry:
 
 ```json
 {
-  "id": "my-new-service",
-  "name": "My new service",
-  "details": "Public website and customer portal",
+  "id": "my-service",
+  "name": "Customer portal",
+  "details": "Website and sign-in availability",
   "url": "https://example.com/replace-with-your-health-endpoint",
   "expected_status_codes": [200],
   "timeout": 10,
@@ -27,80 +45,67 @@ Edit only `servers.json`. Copy either object inside the surrounding `[` and `]`,
 }
 ```
 
-The URL above is a placeholder, not your server. Save/commit the file on the default branch to trigger a check and publish the updated list. Remove an object to remove a server. JSON does not allow comments or trailing commas.
+The URL is an example, not your server. Existing entries without `details` remain compatible. Change `url` to change the endpoint; set `enabled` to `false` to hide and skip it; remove an entry to remove it entirely. Run a check or wait for the next scheduled run. JSON does not allow comments or trailing commas.
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Required unique lower-case ID: letters, numbers, `_`, `-`; starts with a letter or number; maximum 64 characters. |
-| `name` | Required public display name, 1–100 characters. Do not put confidential information here. |
-| `details` | Optional public description, up to 240 characters; defaults to an empty string. Rendered as text, never HTML. |
-| `url` | Required public HTTP/HTTPS URL; no embedded username/password or fragment. Use a non-secret URL. |
-| `expected_status_codes` | Optional non-empty array of integer HTTP codes; defaults to `[200]`. |
+| `id` | Unique lower-case ID, letters/numbers/`_`/`-`, starting with a letter or number; up to 64 characters. |
+| `name` | Display name, 1–100 characters. Use a non-sensitive service label. |
+| `details` | Optional description, up to 240 characters. Rendered as text, never HTML. |
+| `url` | HTTP/HTTPS health endpoint; no username/password or fragment. |
+| `expected_status_codes` | Optional non-empty list of HTTP codes; defaults to `[200]`. |
 | `timeout` | Optional wall-clock seconds per attempt, greater than zero and at most 30; defaults to `10`. |
-| `enabled` | Optional boolean, defaults to `true`. `false` skips the server entirely. |
+| `enabled` | Optional boolean; defaults to `true`. |
 
-Up to 100 entries are supported. Eight checks run concurrently. A failed request gets **one retry after one second**; a server can take up to twice its timeout plus that delay. The last attempt supplies its response time (request start to response headers), or `null` if no HTTP response was received. Bodies are never read or published. Redirects are not followed: configure the final health URL, or explicitly accept a redirect code if that is the intended check.
+Up to 100 entries are supported, with eight concurrent checks. Failed requests get one retry after one second. The last attempt supplies the HTTP result and response time, measured to response headers. Bodies are not read; redirects are not followed. Configure the final health URL, or explicitly accept a redirect code if intended. Endpoint authentication is not implemented: do not embed credentials or secret query parameters in URLs. A future authentication extension should use local secret storage/environment injection, not source files or browser code.
 
-## 3. Change or disable a server
+## Read the tiles
 
-Change its `url` in `servers.json`, or set `"enabled": false`. Commit to the default branch. No dashboard or workflow edits are necessary. Disabled entries are omitted from the next published results.
+- **Green — Up:** the last check returned an expected HTTP status.
+- **Red — Unreachable:** connection/DNS failure or timeout persisted after the retry, from the monitoring machine.
+- **Yellow — Warning:** unexpected HTTP status, certificate error, invalid configuration, unknown/missing result, unsupported private endpoint, or a check older than **15 minutes**. Stale green and red results both become yellow; current availability is unknown.
 
-## 4. Run a manual check
+Each tile shows the name, optional details, status, last HTTP result and expected codes, response time when available, last-check time, and a fixed failure explanation when needed. Old results without HTTP metadata remain readable. A last HTTP 200 never overrides a stale warning.
 
-Open **Actions → Check servers and deploy status → Run workflow**, choose the default branch, then **Run workflow**. Other branches are deliberately skipped. The dashboard's **Refresh results** button only reloads published JSON; it cannot run Actions or contact your endpoints. The page also refreshes automatically every 60 seconds.
+IP addresses, hostnames, ports, endpoint paths, headers, credentials, raw responses and software versions are excluded from generated results. Names, IDs and details are deliberately displayed, not automatically redacted: avoid confidential text. Availability and timing can still reveal operational information, so keep access restricted; no information selection can guarantee zero security impact.
 
-## 5. Understand the results
+The grid follows configuration order, with no dummy tiles: 1 fills the area, 4 use 2×2, 6 use 3×2 and 16 use 4×4 on desktop. Larger lists scroll, tablets use at most two columns, and phones use one. Tiles have readable minimum heights and wrap long names. The toolbar shows overall status/counts, publication time, refresh and fullscreen where supported.
 
-- **Green — Up:** the endpoint returned an expected HTTP status at the last check.
-- **Red — Unreachable:** connection/DNS failure or timeout persisted after one retry, from the monitoring runner. This is not proof that the physical server is powered off.
-- **Yellow — Warning:** an unexpected HTTP response, certificate error, invalid configuration, missing/unknown result or unsupported private endpoint. Results older than **15 minutes** also turn yellow, even if their last state was green or red; current availability is unknown.
+Results refresh every 60 seconds. **Refresh results** reloads generated data; it does not initiate a server check. Failed refreshes retain the previous data with a warning and continue ageing it. Missing/malformed data and an empty server list are handled explicitly. Times use Australian formatting and **Australia/Sydney**, including daylight saving. Relative asset URLs support subpaths.
 
-The monitor publishes structured `reason_code` values (`http_status`, `network`, `timeout`, `tls`, `config`, `private`, `internal`). The dashboard never guesses a classification from free-text errors. Older results without codes remain readable; old `down` results are conservatively yellow until a new check supplies a code.
+## Source code, deployment and privacy
 
-The grid follows configuration order: 1 server fills the area, 4 use 2×2, 6 use 3×2, and 16 use 4×4 on desktop. Intermediate counts use 1–4 columns with no dummy tiles. More than 16 servers add rows. Tiles have a 15rem minimum height, text wraps, and long lists scroll. Tablets use at most two columns and small phones one. The compact toolbar shows counts, results-update time, refresh and a fullscreen toggle where the browser supports it. Press Escape or Exit fullscreen to leave fullscreen.
-Times use Australian formatting and **Australia/Sydney**, including daylight-saving changes. Missing/malformed results show Warning; a failed refresh retains previously loaded results with a visible warning and still ages them into Stale. Empty results never produce “all up”. Invalid enabled entries become Warning while valid entries continue. Unreadable JSON publishes a configuration error with no invented server list.
+The GitHub repository contains reusable code and disabled examples only. Its `Verify Stato` workflow runs Python and JavaScript tests on pushes, pull requests and manual triggers, with read-only permissions. It has no scheduled endpoint checks, Pages upload, deployment permission or results artifact. Do not restore the old Pages workflow with private configuration.
 
-This initial version supports **public, unauthenticated HTTP/HTTPS endpoints**. Recognised private hostnames and addresses resolving to non-public IPs return Warning without a request. Private-network servers require a monitoring runner with network access (for example, a suitably configured self-hosted runner), plus an explicit adaptation of the public-address guard. Their failure to respond from a public runner does not prove they are offline.
+Existing GitHub Pages deployments remain online until explicitly unpublished in **Settings → Pages**; changing a workflow alone does not remove a previously published website. Keep your actual configuration and generated files on your server. `dist/` is ignored by Git. The monitor copies only four static files, `.nojekyll` and generated `status.json` into the output directory and replaces JSON atomically. Do not use that directory to store other sensitive files.
 
-## Security and publication
+To update your private installation, pull the source changes, run the tests and regenerate the output. Your configuration outside the checkout remains in place. Local scheduling avoids GitHub Actions scheduling delays and inactivity rules; it depends instead on your server's own scheduler. GitHub-hosted test runs remain subject to your account's Actions allowances.
 
-`servers.json` stays out of the Pages artifact, but **is visible in a public source repository**. Never store credentials, secret query parameters, private endpoints or sensitive names in it. This version needs no credentials and does not implement authenticated checks. If authentication is added later, keep its values in **Settings → Secrets and variables → Actions**, inject them only into the monitoring step, and never put them in source, output, browser code or logs.
+## Troubleshoot
 
-The public `status.json` contains only schema version, publication time, configuration-error flag and each enabled entry's ID, public name, state, optional public details, structured reason code, response milliseconds, check time and a fixed/sanitised reason. URLs, headers, raw exceptions and responses are excluded. Only the four static site files, `.nojekyll` and generated results are uploaded. No commits are made by the workflow, so deployments cannot create push loops. Workflow concurrency serialises checks/deployments; a newer queued run can replace a pending run.
-
-## Scheduling and limits
-
-The UTC cron `2-57/5 * * * *` requests a run every five minutes, offset from the hour. GitHub can delay or drop scheduled runs during load; schedules run only on the default branch. Public-repository schedules are automatically disabled after **60 days without repository activity**; re-enable them in Actions when needed. This is periodic monitoring, with no guarantee of exact intervals or uninterrupted coverage. [GitHub scheduling rules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
-
-A five-minute cadence requests 288 runs per day (8,640 in 30 days), each with build and deployment jobs. Standard hosted runner usage is free in public repositories. Private repositories have plan-dependent compute allowances and storage limits; excess eligible usage can incur charges or stop when budgets/quota block it. Review your account's current allowance and budgets before using a private repository. Artifacts are retained for one day. [Actions usage and limits](https://docs.github.com/en/actions/concepts/billing-and-usage), [current included allowances](https://docs.github.com/en/billing/reference/product-usage-included)
-
-This custom Actions deployment is exempt from Pages' soft ten-builds-per-hour limit; Pages bandwidth, size and service rate limits still apply. [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
-
-## 6. Troubleshoot
-
-| Symptom | What to check |
+| Symptom | Check |
 | --- | --- |
-| Unreachable / Warning | Confirm the final public URL, expected codes, TLS certificate, firewall access from GitHub runners, DNS and timeout. A 401/403 often means the endpoint is not public. Redirects need their final URL. |
-| Warning/configuration error | Validate JSON and the fields above; check duplicate IDs. Diagnostics intentionally avoid echoing input. Fix the file and rerun. |
-| Yellow / stale | Inspect the newest Actions run, queued deployments, schedule enablement, inactivity, billing/usage limits and environment approval rules. Run manually. |
-| Build failed | Open the failed step in Actions. Check tests, Python/Node runner availability and file paths. No new artifact is deployed on a build failure; previous results age to Stale. |
-| Deployment failed/403/404 | Verify Pages source is GitHub Actions, repository plan supports Pages, `github-pages` permits the default branch, and the deploy job retains `pages: write` and `id-token: write`. See [custom Pages workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages). |
-| No servers | Replace and enable an example in `servers.json`. After committing, wait for deployment, then refresh results. |
-| JSON not loading | Open the published `status.json` beside `index.html`, inspect the deployment and refresh. Avoid opening HTML directly with `file://`. |
+| Unreachable | DNS, routing, firewall and timeout from the monitoring host. This is not proof that the server is powered off. |
+| Unexpected HTTP | Final URL and expected codes. Redirects need the final URL; 401/403 may indicate authentication requirements. |
+| Certificate warning | Certificate validity, hostname and the monitoring host's trusted CA store. Do not disable TLS verification. |
+| Private endpoint warning | Use a runner with access and explicitly pass `--allow-private` for trusted internal endpoints. |
+| Configuration warning | JSON syntax, duplicate IDs, supported fields and file read permissions. Other valid entries continue to be checked. |
+| Stale/yellow | Scheduler, overlapping-run lock, monitor process, output permissions and web-server caching. Run a manual check. |
+| No servers enabled | Replace an example endpoint in your private config, enable it, and rerun. |
+| Results cannot load | Serve the generated directory over HTTP/HTTPS; ensure `status.json` is accessible under the same authenticated path. Avoid `file://`. |
+| Source checks fail | Inspect the failed GitHub Actions test step or run the same tests locally. CI does not deploy the dashboard. |
 
-## Local verification
+## Verification
 
-With Python 3.10+ and a current Node version (Node is only used for tests):
+Python 3.10+ and a current Node version (Node is only needed for tests):
 
 ```sh
 python3 -m unittest discover -s tests -v
 node --test tests/status-model.test.mjs
-python3 scripts/monitor.py
-python3 -m http.server 8765 --directory dist
 ```
 
-Open `http://localhost:8765/`. Tests cover real local HTTP responses, expected/unexpected codes, redirects, timeout handling, the retry bound, private addresses, invalid/duplicate configuration, disabled entries, data isolation, publication allowlisting, empty/malformed results and the stale boundary.
+Tests cover successful/unexpected HTTP responses, timeouts, TLS/network failures, retries, explicit private-network opt-in, configuration errors, output isolation, optional details and HTTP metadata, missing/stale results and grid sizes. Preview data is temporary and never published as monitoring results.
 
 ## Design reference
 
-The tile grid follows the user-supplied Slide1–Slide4 references: full-area flat tiles, centred content, square corners and thin white dividers. Green and red are darker than the mock-ups to maintain readable white-text contrast; yellow uses dark text. No illustrative/demo results are deployed.
+The grid follows the supplied Slide1–Slide4 references: flat full-area tiles, centred content, square corners and thin white dividers. Green and red are dark enough for white text; yellow uses dark text.
