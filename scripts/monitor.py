@@ -1,7 +1,8 @@
-"""Public endpoint checks. Standard library only; never print endpoint/error text."""
+"""Endpoint checks for a privately hosted dashboard. Standard library only; never print endpoint/error text."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from functools import partial
 import ipaddress
 import json
 import math
@@ -67,16 +68,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def probe(entry):
+def probe(entry, allow_private=False):
     """Executed in a child process so DNS and socket work have a wall-clock limit."""
     start = time.monotonic()
     try:
         url = urllib.parse.urlsplit(entry["url"])
         host = url.hostname.rstrip('.').lower()
-        if host == 'localhost' or host.endswith(('.localhost', '.local', '.internal', '.lan')) or ('.' not in host and ':' not in host):
+        if not allow_private and (host == 'localhost' or host.endswith(('.localhost', '.local', '.internal', '.lan')) or ('.' not in host and ':' not in host)):
             return {"status": "unknown", "reason_code": "private", "reason": REASONS["private"], "response_ms": None}
         addresses = socket.getaddrinfo(url.hostname, url.port or (443 if url.scheme == "https" else 80))
-        if not addresses or any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses):
+        if not addresses or (not allow_private and any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses)):
             return {"status": "unknown", "reason_code": "private", "reason": REASONS["private"], "response_ms": None}
         # No redirects or proxies: check exactly the configured endpoint, without reading its body.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -89,7 +90,7 @@ def probe(entry):
             error.close()
         elapsed = round((time.monotonic() - start) * 1000)
         ok = code in entry.get("expected_status_codes", [200])
-        return {"status": "up" if ok else "down", "response_ms": elapsed,
+        return {"status": "up" if ok else "down", "response_ms": elapsed, "http_status": code,
                 "reason_code": None if ok else "http_status",
                 "reason": None if ok else f"Unexpected HTTP status {code}."}
     except (TimeoutError, socket.timeout):
@@ -105,9 +106,12 @@ def probe(entry):
     return {"status": "down", "reason_code": reason, "reason": REASONS[reason], "response_ms": None}
 
 
-def attempt(entry):
+def attempt(entry, allow_private=False):
     try:
-        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--probe"],
+        command = [sys.executable, str(Path(__file__).resolve()), "--probe"]
+        if allow_private:
+            command.append("--allow-private")
+        result = subprocess.run(command,
                                 input=json.dumps(entry), capture_output=True, text=True,
                                 timeout=entry.get("timeout", 10), check=True)
         return json.loads(result.stdout)
@@ -117,15 +121,17 @@ def attempt(entry):
         return {"status": "unknown", "reason_code": "internal", "reason": REASONS["internal"], "response_ms": None}
 
 
-def check(entry):
-    result = attempt(entry)
+def check(entry, allow_private=False):
+    result = attempt(entry, allow_private=allow_private)
     if result["status"] == "down":
         time.sleep(1)
-        result = attempt(entry)  # One retry only; publish final attempt's measurement.
-    return {"id": entry["id"], "name": entry["name"], "details": entry.get("details", ""), **result, "checked_at": now()}
+        result = attempt(entry, allow_private=allow_private)  # One retry only; publish final attempt's measurement.
+    return {"id": entry["id"], "name": entry["name"], "details": entry.get("details", ""),
+            "http_status": None, "expected_status_codes": entry.get("expected_status_codes", [200]),
+            **result, "checked_at": now()}
 
 
-def collect(config):
+def collect(config, allow_private=False):
     generated = {"schema_version": 1, "generated_at": None, "configuration_error": False, "servers": []}
     try:
         entries = json.loads(Path(config).read_text(encoding="utf-8"))
@@ -150,14 +156,14 @@ def collect(config):
             generated["servers"].append(None)
             valid.append(entry)
     with ThreadPoolExecutor(max_workers=8) as pool:
-        for position, result in zip(positions, pool.map(check, valid)):
+        for position, result in zip(positions, pool.map(partial(check, allow_private=allow_private), valid)):
             generated["servers"][position] = result
     generated["generated_at"] = now()
     return generated
 
 
-def build(config, output):
-    data = collect(config)
+def build(config, output, allow_private=False):
+    data = collect(config, allow_private=allow_private)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     # Explicit publication allowlist: never copy configuration, source or credentials.
@@ -176,12 +182,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(ROOT / "servers.json"))
     parser.add_argument("--output", default=str(ROOT / "dist"))
+    parser.add_argument("--allow-private", action="store_true", help="Allow internal endpoints on a trusted runner with network access")
     parser.add_argument("--probe", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.probe:
         try:
-            print(json.dumps(probe(json.load(sys.stdin))))
+            print(json.dumps(probe(json.load(sys.stdin), allow_private=args.allow_private)))
         except Exception:
             print(json.dumps({"status": "unknown", "reason_code": "internal", "reason": REASONS["internal"], "response_ms": None}))
     else:
-        build(args.config, args.output)
+        build(args.config, args.output, allow_private=args.allow_private)
