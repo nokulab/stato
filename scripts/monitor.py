@@ -49,7 +49,9 @@ def validate(entry):
             and isinstance(entry.get("details", ""), str)
             and len(entry.get("details", "")) <= 240
             and not any(ord(c) < 32 for c in entry.get("details", ""))
-            and url.scheme in ("http", "https") and url.hostname
+            and url.scheme in ("http", "https", "tcp") and url.hostname
+            and (url.scheme != "tcp" or (url.port is not None and not url.path
+                 and not url.query and "expected_status_codes" not in entry))
             and not url.username and not url.password and not url.fragment
             and (url.port is None or 1 <= url.port <= 65535)
             and not any(c.isspace() for c in entry["url"])
@@ -79,6 +81,12 @@ def probe(entry, allow_private=False):
         addresses = socket.getaddrinfo(url.hostname, url.port or (443 if url.scheme == "https" else 80))
         if not addresses or (not allow_private and any(not ipaddress.ip_address(a[4][0]).is_global for a in addresses)):
             return {"status": "unknown", "reason_code": "private", "reason": REASONS["private"], "response_ms": None}
+        if url.scheme == "tcp":
+            # Connect and close only: no SSH login, banner read or application payload.
+            with socket.create_connection((url.hostname, url.port), timeout=entry.get("timeout", 10)):
+                pass
+            return {"status": "up", "response_ms": round((time.monotonic() - start) * 1000),
+                    "reason_code": None, "reason": None}
         # No redirects or proxies: check exactly the configured endpoint, without reading its body.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         request = urllib.request.Request(entry["url"], headers={"User-Agent": "SimpleStatus/1.0", "Accept": "*/*"})
@@ -126,9 +134,11 @@ def check(entry, allow_private=False):
     if result["status"] == "down":
         time.sleep(1)
         result = attempt(entry, allow_private=allow_private)  # One retry only; publish final attempt's measurement.
+    tcp = urllib.parse.urlsplit(entry["url"]).scheme == "tcp"
+    metadata = {"check_type": "tcp"} if tcp else {"check_type": "http", "http_status": None,
+                "expected_status_codes": entry.get("expected_status_codes", [200])}
     return {"id": entry["id"], "name": entry["name"], "details": entry.get("details", ""),
-            "http_status": None, "expected_status_codes": entry.get("expected_status_codes", [200]),
-            **result, "checked_at": now()}
+            **metadata, **result, "checked_at": now()}
 
 
 def collect(config, allow_private=False):
